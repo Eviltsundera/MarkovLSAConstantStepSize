@@ -5,6 +5,7 @@ Metrics: coverage, L2 error, CI width.
 RR is vectorized. Bootstrap uses multiprocessing across trajectories.
 """
 
+import argparse
 import time
 import multiprocessing as mp
 
@@ -55,16 +56,15 @@ def _bootstrap_one(args):
     return l2, width, cov
 
 
-def main():
+def main(T=1_000_000, n_traj=500, n_workers=None):
     logger, log_path = setup_logger("bootstrap")
 
-    T = 1_000_000
     n_states = 10
     d = 5
-    n_traj = 500
     burn_in = 1000
     K = int(T ** 0.3)
-    n_workers = mp.cpu_count()
+    if n_workers is None:
+        n_workers = mp.cpu_count()
 
     logger.info(f"[Config] T={T:,}, n_traj={n_traj}, n_states={n_states}, d={d}, "
                 f"K={K}, burn_in={burn_in}")
@@ -159,5 +159,14 @@ def main():
     logger.info(f"Full log saved to {log_path}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Table 4: RR vs Bootstrap comparison")
+    parser.add_argument("-T", type=int, default=1_000_000, help="Trajectory length (default: 1000000)")
+    parser.add_argument("--n-traj", type=int, default=500, help="Number of trajectories (default: 500)")
+    parser.add_argument("--n-workers", type=int, default=None, help="Multiprocessing workers (default: cpu_count)")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    main(T=args.T, n_traj=args.n_traj, n_workers=args.n_workers)

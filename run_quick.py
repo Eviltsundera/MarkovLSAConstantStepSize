@@ -4,6 +4,7 @@
 Uses vectorized trajectories + multiprocessing for speed.
 """
 
+import argparse
 import time
 import multiprocessing as mp
 
@@ -62,14 +63,17 @@ def _solve_one_problem(args):
     return results
 
 
-def run_table1_quick(logger):
+def run_table1_quick(logger, n_workers=None):
     n_problems = 20
     n_traj = 50
     T = 100_000
     n_states, d = 10, 5
     K = int(T ** 0.3)
     burn_in = min(1000, T // 10)
-    n_workers = min(mp.cpu_count(), n_problems)
+    if n_workers is None:
+        n_workers = min(mp.cpu_count(), n_problems)
+    else:
+        n_workers = min(n_workers, n_problems)
 
     logger.info(f"[Table 1] n_problems={n_problems}, n_traj={n_traj}, T={T:,}, "
                 f"K={K}, n_workers={n_workers}")
@@ -238,7 +242,15 @@ def run_table2_quick(logger):
     logger.info("  K=500:  RR=94.2, 0.2/√k=88.8, 0.02/√k=42.2")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Quick reproduction experiments")
+    parser.add_argument("--n-workers", type=int, default=None,
+                        help="Multiprocessing workers (default: cpu_count)")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
+    args = parse_args()
     logger, log_path = setup_logger("quick")
     t_global = time.time()
 
@@ -247,7 +259,7 @@ if __name__ == '__main__':
     logger.info(f"Log file: {log_path}")
     logger.info("(For full-scale: python run_experiments.py)\n")
 
-    run_table1_quick(logger)
+    run_table1_quick(logger, n_workers=args.n_workers)
     run_table3_quick(logger)
     run_table2_quick(logger)
 

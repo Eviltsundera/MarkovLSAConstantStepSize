@@ -10,9 +10,9 @@ Parallelized via multiprocessing across problems.
 Vectorized: all trajectories for a single problem run simultaneously.
 """
 
+import argparse
 import time
 import multiprocessing as mp
-from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -193,5 +193,15 @@ def main(n_problems=100, n_traj=100, T=100_000, n_workers=None):
     logger.info(f"Full log saved to {log_path}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Table 1: Main comparison across random problems")
+    parser.add_argument("--n-problems", type=int, default=100, help="Number of random problems (default: 100)")
+    parser.add_argument("--n-traj", type=int, default=100, help="Trajectories per problem (default: 100)")
+    parser.add_argument("-T", type=int, default=100_000, help="Trajectory length (default: 100000)")
+    parser.add_argument("--n-workers", type=int, default=None, help="Multiprocessing workers (default: min(cpu_count, n_problems))")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    main(n_problems=args.n_problems, n_traj=args.n_traj, T=args.T, n_workers=args.n_workers)

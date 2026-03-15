@@ -7,7 +7,9 @@ T values: 10^3, 10^4, 10^5, 10^6.
 Vectorized: all trajectories run simultaneously.
 """
 
+import argparse
 import time
+
 import numpy as np
 import pandas as pd
 
@@ -20,12 +22,11 @@ from lsa_inference.vectorized import (
 from lsa_inference.logging_utils import setup_logger
 
 
-def main():
+def main(n_traj=500):
     logger, log_path = setup_logger("table3")
 
     n_states = 10
     d = 5
-    n_traj = 500
     T_values = [1_000, 10_000, 100_000, 1_000_000]
 
     logger.info(f"[Config] n_traj={n_traj}, n_states={n_states}, d={d}")
@@ -127,5 +128,12 @@ def main():
     logger.info(f"Full log saved to {log_path}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Table 3: Effect of trajectory length T")
+    parser.add_argument("--n-traj", type=int, default=500, help="Number of trajectories (default: 500)")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    main(n_traj=args.n_traj)

@@ -6,7 +6,9 @@ K values: 50, 100, 500, 1000.
 Vectorized: all trajectories run simultaneously.
 """
 
+import argparse
 import time
+
 import numpy as np
 import pandas as pd
 
@@ -18,13 +20,11 @@ from lsa_inference.vectorized import (
 from lsa_inference.logging_utils import setup_logger
 
 
-def main():
+def main(T=1_000_000, n_traj=500):
     logger, log_path = setup_logger("table2")
 
-    T = 1_000_000
     n_states = 10
     d = 5
-    n_traj = 500
     burn_in = min(1000, T // 10)
     K_values = [50, 100, 500, 1000]
 
@@ -110,5 +110,13 @@ def main():
     logger.info(f"Full log saved to {log_path}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Table 2: Effect of batch number K")
+    parser.add_argument("-T", type=int, default=1_000_000, help="Trajectory length (default: 1000000)")
+    parser.add_argument("--n-traj", type=int, default=500, help="Number of trajectories (default: 500)")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    main(T=args.T, n_traj=args.n_traj)
