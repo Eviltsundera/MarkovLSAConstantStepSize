@@ -107,14 +107,13 @@ def run_lsa_diminishing_vec(A_arr, b_arr, trajs, alpha0, alpha_exp=0.5,
     n_traj, T = trajs.shape
     d = b_arr.shape[1]
 
-    # CLTZ20 batch endpoints
+    # CLTZ20 batch endpoints: e_k = ((k+1)*r)^{1/(1-exp)} so that e_K = T.
     r = T ** (1 - alpha_exp) / (K + 1)
     endpoints = [0]
     for k in range(1, K + 1):
-        e_k = int((k * r) ** (1 / (1 - alpha_exp)))
+        e_k = int(((k + 1) * r) ** (1 / (1 - alpha_exp)))
         e_k = min(e_k, T)
         endpoints.append(e_k)
-    endpoints.append(T)
 
     thetas = np.zeros((n_traj, d))
     batch_sums = np.zeros((n_traj, K, d))

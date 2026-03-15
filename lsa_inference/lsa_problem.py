@@ -6,6 +6,9 @@ import numpy as np
 def generate_A(n_states, d, pi, rng):
     """Generate state-dependent matrices A(x) with Hurwitz mean.
 
+    Follows the paper's setup (Section 6.1): random Hurwitz A_bar with
+    per-state noise whose pi-weighted mean is exactly A_bar.
+
     Args:
         n_states: Number of Markov chain states.
         d: Dimension of theta.
@@ -20,48 +23,16 @@ def generate_A(n_states, d, pi, rng):
     evals = np.linalg.eigvals(M_A)
     max_real = np.max(np.real(evals))
     if max_real >= 0:
-        M_A -= (max_real + 0.5) * np.eye(d)
-
-    # Ensure rho(I + alpha_max * A_bar) < 1 for alpha_max = 0.2.
-    # For eigenvalue lambda = a + bi, |1 + alpha*s*lambda|^2 < 1 requires
-    # s < 2|a| / (alpha * |lambda|^2).  Scale M_A if needed.
-    alpha_max = 0.2
-    evals = np.linalg.eigvals(M_A)
-    sr = np.max(np.abs(1 + alpha_max * evals))
-    if sr >= 1.0:
-        s_limits = []
-        for lam in evals:
-            a = np.real(lam)
-            mag_sq = np.abs(lam) ** 2
-            if mag_sq > 0 and a < 0:
-                s_limits.append(2 * abs(a) / (alpha_max * mag_sq))
-        if s_limits:
-            M_A *= min(s_limits) * 0.95
+        M_A -= 2 * max_real * np.eye(d)
 
     A_bar = M_A.copy()
 
-    # Generate per-state noise with centering to enforce E_pi[A(x)] = A_bar.
-    # Previous approach divided by pi[-1] which amplifies noise when pi[-1] is
-    # small.  Centering distributes the correction across all states evenly.
-    #
-    # We also verify that rho(I + alpha_max * A(x)) < 1 for EVERY state x.
-    # When A_bar eigenvalues are close to 0 (after spectral-radius scaling),
-    # per-state noise can push individual A(x) into instability.  If that
-    # happens, shrink the noise scale and retry.
-    noise_scale = 1.0
-    for _attempt in range(20):
-        E = rng.uniform(-noise_scale, noise_scale, (n_states, d, d))
-        E_bar = np.einsum('x,xij->ij', pi, E)
-        A_list = [A_bar + (E[x] - E_bar) for x in range(n_states)]
-
-        # Check per-state spectral radius
-        max_sr = max(
-            np.max(np.abs(1 + alpha_max * np.linalg.eigvals(A)))
-            for A in A_list
-        )
-        if max_sr < 1.0:
-            break
-        noise_scale *= 0.7  # Shrink noise and retry
+    # Per-state noise: first n_states-1 get i.i.d. noise, last state absorbs
+    # the correction so that E_pi[A(x)] = A_bar exactly.
+    E = rng.uniform(-1, 1, (n_states - 1, d, d))
+    A_list = [A_bar + E[x] for x in range(n_states - 1)]
+    A_last = A_bar - sum(pi[x] * E[x] for x in range(n_states - 1)) / pi[-1]
+    A_list.append(A_last)
 
     return A_list, A_bar
 
