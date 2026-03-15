@@ -80,10 +80,11 @@ def run_lsa_batched_vec(A_arr, b_arr, trajs, alpha, K, burn_in=100, n0=0):
     else:
         batch_means = batch_sums
 
-    # Mark diverged trajectories: replace inf/nan and very large values with
-    # nan so downstream metrics (squaring, norms) don't overflow float64.
+    # Mark diverged trajectories: replace inf/nan and unreasonably large values
+    # with nan.  Threshold 1e10 is generous (true theta* is order 1) while
+    # catching transient divergence that stays below float64 inf.
     batch_means = np.where(
-        np.isfinite(batch_means) & (np.abs(batch_means) < 1e150),
+        np.isfinite(batch_means) & (np.abs(batch_means) < 1e10),
         batch_means, np.nan
     )
 
@@ -148,7 +149,7 @@ def run_lsa_diminishing_vec(A_arr, b_arr, trajs, alpha0, alpha_exp=0.5,
             total_used += batch_counts[k]
 
     batch_means = np.where(
-        np.isfinite(batch_means) & (np.abs(batch_means) < 1e150),
+        np.isfinite(batch_means) & (np.abs(batch_means) < 1e10),
         batch_means, np.nan
     )
 

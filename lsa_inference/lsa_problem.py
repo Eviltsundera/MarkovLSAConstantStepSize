@@ -43,9 +43,25 @@ def generate_A(n_states, d, pi, rng):
     # Generate per-state noise with centering to enforce E_pi[A(x)] = A_bar.
     # Previous approach divided by pi[-1] which amplifies noise when pi[-1] is
     # small.  Centering distributes the correction across all states evenly.
-    E = rng.uniform(-1, 1, (n_states, d, d))
-    E_bar = np.einsum('x,xij->ij', pi, E)
-    A_list = [A_bar + (E[x] - E_bar) for x in range(n_states)]
+    #
+    # We also verify that rho(I + alpha_max * A(x)) < 1 for EVERY state x.
+    # When A_bar eigenvalues are close to 0 (after spectral-radius scaling),
+    # per-state noise can push individual A(x) into instability.  If that
+    # happens, shrink the noise scale and retry.
+    noise_scale = 1.0
+    for _attempt in range(20):
+        E = rng.uniform(-noise_scale, noise_scale, (n_states, d, d))
+        E_bar = np.einsum('x,xij->ij', pi, E)
+        A_list = [A_bar + (E[x] - E_bar) for x in range(n_states)]
+
+        # Check per-state spectral radius
+        max_sr = max(
+            np.max(np.abs(1 + alpha_max * np.linalg.eigvals(A)))
+            for A in A_list
+        )
+        if max_sr < 1.0:
+            break
+        noise_scale *= 0.7  # Shrink noise and retry
 
     return A_list, A_bar
 
