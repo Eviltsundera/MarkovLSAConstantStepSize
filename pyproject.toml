@@ -1,7 +1,7 @@
 [project]
 name = "markovlsaconstantstepsize"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reproduction of 'Effectiveness of Constant Stepsize in Markovian LSA and Statistical Inference' (Huo, Chen, Xie 2023)"
 requires-python = ">=3.11"
 dependencies = [
     "matplotlib>=3.10.8",

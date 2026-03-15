@@ -9,9 +9,6 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-
 from lsa_inference.markov_chain import generate_transition_matrix, simulate_chain
 from lsa_inference.lsa_problem import generate_A, generate_b, compute_theta_star
 from lsa_inference.lsa_runner import run_lsa_batched, run_lsa_diminishing
