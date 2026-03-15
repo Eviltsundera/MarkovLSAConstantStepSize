@@ -6,6 +6,7 @@ require hours of computation. This script runs smaller-scale versions that
 demonstrate the same qualitative findings in minutes.
 """
 
+import time
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -27,6 +28,9 @@ def run_table1_quick():
     K = int(T ** 0.3)
     burn_in = min(1000, T // 10)
 
+    print(f"[Config] n_problems={n_problems}, n_traj={n_traj}, T={T:,}, "
+          f"K={K}, burn_in={burn_in}")
+
     master_rng = np.random.default_rng(42)
     methods = ['alpha_0.2', 'alpha_0.02', 'RR', 'dim_0.2', 'dim_0.02']
     method_labels = {
@@ -38,17 +42,26 @@ def run_table1_quick():
     }
     all_results = {m: {'l2': [], 'width': [], 'cov': []} for m in methods}
 
-    for _ in tqdm(range(n_problems), desc="Table 1 (quick)"):
+    t_start = time.time()
+
+    for prob_idx in range(n_problems):
+        t_prob_start = time.time()
         prob_rng = np.random.default_rng(master_rng.integers(0, 2**31))
         P, pi = generate_transition_matrix(n_states, prob_rng)
-        A_list, _ = generate_A(n_states, d, pi, prob_rng)
+        A_list, A_bar = generate_A(n_states, d, pi, prob_rng)
         b_list = generate_b(n_states, d, prob_rng)
         theta_star = compute_theta_star(A_list, b_list, pi)
         traj_rng = np.random.default_rng(prob_rng.integers(0, 2**31))
 
+        evals = np.linalg.eigvals(A_bar)
+        print(f"\n[Problem {prob_idx+1}/{n_problems}] "
+              f"||θ*||={np.linalg.norm(theta_star):.4f}, "
+              f"max_re(λ(Ā))={np.max(np.real(evals)):.4f}")
+
         prob_results = {m: {'l2': [], 'width': [], 'cov': []} for m in methods}
 
-        for _ in range(n_traj):
+        for _ in tqdm(range(n_traj), desc=f"  Problem {prob_idx+1} trajectories",
+                      leave=False):
             traj = simulate_chain(P, pi, T, traj_rng)
 
             bm, n = run_lsa_batched(A_list, b_list, traj, 0.2, K, burn_in)
@@ -86,8 +99,21 @@ def run_table1_quick():
             all_results[m]['width'].append(np.mean(prob_results[m]['width']))
             all_results[m]['cov'].append(np.mean(prob_results[m]['cov']))
 
+        t_prob = time.time() - t_prob_start
+        t_elapsed = time.time() - t_start
+        t_remaining = t_elapsed / (prob_idx + 1) * (n_problems - prob_idx - 1)
+
+        print(f"  Results: "
+              f"RR cov={np.mean(prob_results['RR']['cov'])*100:.0f}%, "
+              f"α=0.02 cov={np.mean(prob_results['alpha_0.02']['cov'])*100:.0f}%, "
+              f"α=0.2 cov={np.mean(prob_results['alpha_0.2']['cov'])*100:.0f}%")
+        print(f"  Time: {t_prob:.1f}s | {t_elapsed:.0f}s elapsed | "
+              f"~{t_remaining:.0f}s remaining ({t_remaining/60:.1f}min)")
+
+    t_total = time.time() - t_start
     print("\n" + "=" * 80)
     print(f"Table 1 (Quick): {n_problems} problems, {n_traj} traj, T={T}")
+    print(f"Total time: {t_total:.0f}s ({t_total/60:.1f}min)")
     print("=" * 80)
     percentiles = [10, 25, 50, 75, 90]
     for metric, scale, unit in [('l2', 1e3, '×1e-3'), ('width', 1e3, '×1e-3'), ('cov', 100, '%')]:
@@ -112,11 +138,17 @@ def run_table3_quick():
     n_traj = 200
     T_values = [1_000, 10_000, 100_000]
 
+    print(f"\n[Config] n_traj={n_traj}, T values: {[f'{t:,}' for t in T_values]}")
+
     rng = np.random.default_rng(456)
     P, pi = generate_transition_matrix(n_states, rng)
-    A_list, _ = generate_A(n_states, d, pi, rng)
+    A_list, A_bar = generate_A(n_states, d, pi, rng)
     b_list = generate_b(n_states, d, rng)
     theta_star = compute_theta_star(A_list, b_list, pi)
+
+    evals = np.linalg.eigvals(A_bar)
+    print(f"[Problem] ||θ*||={np.linalg.norm(theta_star):.4f}, "
+          f"max_re(λ(Ā))={np.max(np.real(evals)):.4f}")
 
     methods = ['RR', 'alpha_0.2', 'alpha_0.02', 'dim_0.2']
     method_labels = {
@@ -130,12 +162,18 @@ def run_table3_quick():
     print("Table 3 (Quick): Effect of Trajectory Length T")
     print("=" * 60)
 
-    for T in T_values:
+    t_start_all = time.time()
+
+    for ti, T in enumerate(T_values):
         K = max(int(T ** 0.3), 5)
         burn_in = min(1000, T // 10)
         cov_accum = {m: [] for m in methods}
 
-        for _ in tqdm(range(n_traj), desc=f"T={T}"):
+        print(f"\n[T={T:,}] Starting ({ti+1}/{len(T_values)}), K={K}")
+        t_T_start = time.time()
+        log_interval = max(1, n_traj // 5)
+
+        for traj_idx in tqdm(range(n_traj), desc=f"T={T:,}"):
             traj_rng = np.random.default_rng(rng.integers(0, 2**31))
             traj = simulate_chain(P, pi, T, traj_rng)
 
@@ -155,10 +193,25 @@ def run_table3_quick():
             tb, Sh = compute_covariance(bm, n_eff)
             cov_accum['dim_0.2'].append(coverage(theta_star, tb, Sh, K, n_eff))
 
-        print(f"\n  T = {T}, K = {K}:")
+            if (traj_idx + 1) % log_interval == 0:
+                done = traj_idx + 1
+                t_elapsed = time.time() - t_T_start
+                t_remaining = t_elapsed / done * (n_traj - done)
+                print(f"  [{done}/{n_traj}] "
+                      f"RR={np.mean(cov_accum['RR'])*100:.1f}%, "
+                      f"α0.2={np.mean(cov_accum['alpha_0.2'])*100:.1f}%, "
+                      f"α0.02={np.mean(cov_accum['alpha_0.02'])*100:.1f}%, "
+                      f"dim={np.mean(cov_accum['dim_0.2'])*100:.1f}% "
+                      f"| ~{t_remaining:.0f}s left")
+
+        t_T = time.time() - t_T_start
+        print(f"[T={T:,}] Done in {t_T:.1f}s:")
         for m in methods:
             v = np.mean(cov_accum[m]) * 100
             print(f"    {method_labels[m]}: {v:.1f}%")
+
+    t_total = time.time() - t_start_all
+    print(f"\nTable 3 total time: {t_total:.0f}s ({t_total/60:.1f}min)")
 
     print("\nPaper Table 3 reference (coverage %):")
     print("       T     | RR    | α=0.2 | α=0.02 | 0.2/√k")
@@ -176,11 +229,17 @@ def run_table2_quick():
     burn_in = 1000
     K_values = [50, 100, 500]
 
+    print(f"\n[Config] T={T:,}, n_traj={n_traj}, K values: {K_values}")
+
     rng = np.random.default_rng(123)
     P, pi = generate_transition_matrix(n_states, rng)
-    A_list, _ = generate_A(n_states, d, pi, rng)
+    A_list, A_bar = generate_A(n_states, d, pi, rng)
     b_list = generate_b(n_states, d, rng)
     theta_star = compute_theta_star(A_list, b_list, pi)
+
+    evals = np.linalg.eigvals(A_bar)
+    print(f"[Problem] ||θ*||={np.linalg.norm(theta_star):.4f}, "
+          f"max_re(λ(Ā))={np.max(np.real(evals)):.4f}")
 
     methods = ['RR', 'dim_0.2', 'dim_0.02']
     method_labels = {
@@ -193,10 +252,16 @@ def run_table2_quick():
     print("Table 2 (Quick): Effect of Batch Number K")
     print("=" * 60)
 
-    for K in K_values:
+    t_start_all = time.time()
+
+    for ki, K in enumerate(K_values):
         cov_accum = {m: [] for m in methods}
 
-        for _ in tqdm(range(n_traj), desc=f"K={K}"):
+        print(f"\n[K={K}] Starting ({ki+1}/{len(K_values)})")
+        t_k_start = time.time()
+        log_interval = max(1, n_traj // 5)
+
+        for traj_idx in tqdm(range(n_traj), desc=f"K={K}"):
             traj_rng = np.random.default_rng(rng.integers(0, 2**31))
             traj = simulate_chain(P, pi, T, traj_rng)
 
@@ -212,11 +277,25 @@ def run_table2_quick():
             tb, Sh = compute_covariance(bm, n_eff)
             cov_accum['dim_0.02'].append(coverage(theta_star, tb, Sh, K, n_eff))
 
-        print(f"\n  K = {K}:")
+            if (traj_idx + 1) % log_interval == 0:
+                done = traj_idx + 1
+                t_elapsed = time.time() - t_k_start
+                t_remaining = t_elapsed / done * (n_traj - done)
+                print(f"  [{done}/{n_traj}] "
+                      f"RR={np.mean(cov_accum['RR'])*100:.1f}%, "
+                      f"dim0.2={np.mean(cov_accum['dim_0.2'])*100:.1f}%, "
+                      f"dim0.02={np.mean(cov_accum['dim_0.02'])*100:.1f}% "
+                      f"| ~{t_remaining:.0f}s left")
+
+        t_k = time.time() - t_k_start
+        print(f"[K={K}] Done in {t_k:.1f}s:")
         for m in methods:
             v = np.mean(cov_accum[m]) * 100
             se = np.std(cov_accum[m]) / np.sqrt(n_traj) * 100
             print(f"    {method_labels[m]}: {v:.1f}% ± {se:.1f}%")
+
+    t_total = time.time() - t_start_all
+    print(f"\nTable 2 total time: {t_total:.0f}s ({t_total/60:.1f}min)")
 
     print("\nPaper Table 2 reference (T=10^6, coverage %):")
     print("  K=50:   RR=92.8, 0.2/√k=93.0, 0.02/√k=81.6")
@@ -226,6 +305,7 @@ def run_table2_quick():
 
 
 if __name__ == '__main__':
+    t_global = time.time()
     print("Running quick reproduction experiments...")
     print("(For full-scale reproduction matching paper numbers exactly,")
     print(" use: python run_experiments.py)\n")
@@ -234,10 +314,11 @@ if __name__ == '__main__':
     run_table3_quick()
     run_table2_quick()
 
+    t_total = time.time() - t_global
     print("\n" + "=" * 80)
-    print("DONE. Key findings reproduced:")
+    print(f"DONE in {t_total:.0f}s ({t_total/60:.1f}min). Key findings reproduced:")
     print("  1. RR extrapolation achieves best CI coverage (~94-95%)")
-    print("  2. Constant α=0.2 alone has large bias → low coverage for large T")
+    print("  2. Constant α=0.2 alone has large bias -> low coverage for large T")
     print("  3. Constant α=0.02 has good coverage but RR is better")
     print("  4. Diminishing stepsizes degrade with large K (batch number)")
     print("  5. RR is robust to choice of K")

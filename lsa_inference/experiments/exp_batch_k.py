@@ -4,6 +4,7 @@ Methods: RR(0.2+0.02), diminishing 0.2/sqrt(k), diminishing 0.02/sqrt(k).
 K values: 50, 100, 500, 1000.
 """
 
+import time
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -24,11 +25,19 @@ def main():
     burn_in = min(1000, T // 10)
     K_values = [50, 100, 500, 1000]
 
+    print(f"[Config] T={T:,}, n_traj={n_traj}, n_states={n_states}, d={d}, "
+          f"burn_in={burn_in}")
+    print(f"[Config] K values: {K_values}")
+
     rng = np.random.default_rng(123)
     P, pi = generate_transition_matrix(n_states, rng)
     A_list, A_bar = generate_A(n_states, d, pi, rng)
     b_list = generate_b(n_states, d, rng)
     theta_star = compute_theta_star(A_list, b_list, pi)
+
+    evals = np.linalg.eigvals(A_bar)
+    print(f"[Problem] ||θ*||={np.linalg.norm(theta_star):.4f}, "
+          f"max_re(λ(Ā))={np.max(np.real(evals)):.4f}")
 
     methods = ['RR', 'dim_0.2', 'dim_0.02']
     method_labels = {
@@ -38,10 +47,16 @@ def main():
     }
 
     results = []
+    t_start_all = time.time()
 
-    for K in K_values:
-        print(f"\n--- K = {K} ---")
+    for ki, K in enumerate(K_values):
+        print(f"\n{'='*60}")
+        print(f"[K={K}] Starting ({ki+1}/{len(K_values)})")
+        print(f"{'='*60}")
+        t_k_start = time.time()
         cov_accum = {m: [] for m in methods}
+
+        log_interval = max(1, n_traj // 10)
 
         for traj_idx in tqdm(range(n_traj), desc=f"K={K}"):
             traj_rng = np.random.default_rng(rng.integers(0, 2**31))
@@ -64,6 +79,20 @@ def main():
             cov_accum['dim_0.02'].append(
                 coverage(theta_star, tb, Sh, K, n_eff))
 
+            # Periodic progress log
+            if (traj_idx + 1) % log_interval == 0:
+                done = traj_idx + 1
+                t_elapsed = time.time() - t_k_start
+                t_per_traj = t_elapsed / done
+                t_remaining = t_per_traj * (n_traj - done)
+                print(f"  [{done}/{n_traj}] Running coverage: "
+                      f"RR={np.mean(cov_accum['RR'])*100:.1f}%, "
+                      f"dim0.2={np.mean(cov_accum['dim_0.2'])*100:.1f}%, "
+                      f"dim0.02={np.mean(cov_accum['dim_0.02'])*100:.1f}% "
+                      f"| {t_elapsed:.0f}s elapsed, ~{t_remaining:.0f}s left")
+
+        t_k = time.time() - t_k_start
+        print(f"\n[K={K}] Done in {t_k:.1f}s ({t_k/60:.1f}min)")
         for m in methods:
             vals = np.array(cov_accum[m])
             mean_cov = np.mean(vals) * 100
@@ -76,9 +105,11 @@ def main():
                 'se_pct': se_cov,
             })
 
+    t_total = time.time() - t_start_all
     df = pd.DataFrame(results)
-    print("\n" + "=" * 60)
-    print("Table 2: Effect of Batch Number K (T=10^6)")
+    print(f"\n{'='*60}")
+    print(f"Table 2: Effect of Batch Number K (T={T:,})")
+    print(f"Total time: {t_total:.0f}s ({t_total/60:.1f}min)")
     print("=" * 60)
     pivot = df.pivot(index='K', columns='method', values='coverage_pct')
     print(pivot.to_string())

@@ -3,6 +3,7 @@
 Metrics: coverage, L2 error, CI width.
 """
 
+import time
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -67,16 +68,26 @@ def main():
     burn_in = 1000
     K = int(T ** 0.3)
 
+    print(f"[Config] T={T:,}, n_traj={n_traj}, n_states={n_states}, d={d}, "
+          f"K={K}, burn_in={burn_in}")
+
     rng = np.random.default_rng(789)
     P, pi = generate_transition_matrix(n_states, rng)
     A_list, A_bar = generate_A(n_states, d, pi, rng)
     b_list = generate_b(n_states, d, rng)
     theta_star = compute_theta_star(A_list, b_list, pi)
 
+    evals = np.linalg.eigvals(A_bar)
+    print(f"[Problem] ||θ*||={np.linalg.norm(theta_star):.4f}, "
+          f"max_re(λ(Ā))={np.max(np.real(evals)):.4f}")
+
     results = {'RR': {'cov': [], 'l2': [], 'width': []},
                'Bootstrap': {'cov': [], 'l2': [], 'width': []}}
 
-    for _ in tqdm(range(n_traj), desc="Trajectories"):
+    log_interval = max(1, n_traj // 10)
+    t_start = time.time()
+
+    for traj_idx in tqdm(range(n_traj), desc="Trajectories"):
         traj_rng = np.random.default_rng(rng.integers(0, 2**31))
         traj = simulate_chain(P, pi, T, traj_rng)
 
@@ -95,15 +106,31 @@ def main():
         results['Bootstrap']['l2'].append(l2_error(tb, theta_star))
         results['Bootstrap']['width'].append(width_b)
 
-    print("\n" + "=" * 60)
-    print("Table: RR vs Bootstrap Comparison (T=10^6)")
+        # Periodic progress log
+        if (traj_idx + 1) % log_interval == 0:
+            done = traj_idx + 1
+            t_elapsed = time.time() - t_start
+            t_per_traj = t_elapsed / done
+            t_remaining = t_per_traj * (n_traj - done)
+            print(f"  [{done}/{n_traj}] Running stats: "
+                  f"RR cov={np.mean(results['RR']['cov'])*100:.1f}%, "
+                  f"L2={np.mean(results['RR']['l2']):.2e} | "
+                  f"Boot cov={np.mean(results['Bootstrap']['cov'])*100:.1f}%, "
+                  f"L2={np.mean(results['Bootstrap']['l2']):.2e} "
+                  f"| {t_elapsed:.0f}s elapsed, ~{t_remaining:.0f}s left")
+
+    t_total = time.time() - t_start
+    print(f"\n{'='*60}")
+    print(f"Table: RR vs Bootstrap Comparison (T={T:,})")
+    print(f"Total time: {t_total:.0f}s ({t_total/60:.1f}min)")
     print("=" * 60)
 
     for method in ['RR', 'Bootstrap']:
         cov_mean = np.mean(results[method]['cov']) * 100
+        cov_se = np.std(results[method]['cov']) / np.sqrt(n_traj) * 100
         l2_mean = np.mean(results[method]['l2'])
         w_mean = np.mean(results[method]['width'])
-        print(f"{method:>12}: Coverage={cov_mean:.1f}%, "
+        print(f"{method:>12}: Coverage={cov_mean:.1f}% ± {cov_se:.1f}%, "
               f"L2={l2_mean:.2e}, CI Width={w_mean:.5f}")
 
     rows = []
