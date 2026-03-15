@@ -5,88 +5,97 @@ Methods: constant alpha=0.2, constant alpha=0.02, RR(0.2+0.02),
 
 Metrics: L2 error, CI width, coverage (percentiles across 100 problems).
 Each problem: 100 independent trajectories.
+
+Parallelized via multiprocessing across problems.
+Vectorized: all trajectories for a single problem run simultaneously.
 """
 
 import time
+import multiprocessing as mp
+from functools import partial
+
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
-from lsa_inference.markov_chain import generate_transition_matrix, simulate_chain
+from lsa_inference.markov_chain import generate_transition_matrix, simulate_chains_batch
 from lsa_inference.lsa_problem import generate_A, generate_b, compute_theta_star
-from lsa_inference.lsa_runner import run_lsa_batched, run_lsa_diminishing
-from lsa_inference.batch_inference import compute_covariance
-from lsa_inference.rr_extrapolation import run_rr_extrapolation
-from lsa_inference.utils import l2_error, ci_width, coverage
+from lsa_inference.vectorized import (
+    _prepare_arrays, run_lsa_batched_vec, run_lsa_diminishing_vec,
+    compute_metrics_vec, run_rr_vec,
+)
+from lsa_inference.logging_utils import setup_logger
 
 
-def run_single_problem(A_list, b_list, P, pi, theta_star, T, K, n_traj,
-                       burn_in, rng, prob_idx):
-    """Run all methods on one problem instance across n_traj trajectories."""
-    d = len(theta_star)
-    methods = ['alpha_0.2', 'alpha_0.02', 'RR', 'dim_0.2', 'dim_0.02']
-    results = {m: {'l2': [], 'width': [], 'cov': []} for m in methods}
+def _solve_one_problem(args):
+    """Worker function: solve one problem instance (all trajectories vectorized)."""
+    prob_idx, prob_seed, n_traj, T, K, burn_in, n_states, d = args
 
-    for traj_idx in tqdm(range(n_traj), desc=f"  Problem {prob_idx} trajectories",
-                         leave=False):
-        traj = simulate_chain(P, pi, T, rng)
+    prob_rng = np.random.default_rng(prob_seed)
+    P, pi = generate_transition_matrix(n_states, prob_rng)
+    A_list, A_bar = generate_A(n_states, d, pi, prob_rng)
+    b_list = generate_b(n_states, d, prob_rng)
+    theta_star = compute_theta_star(A_list, b_list, pi)
+    A_arr, b_arr = _prepare_arrays(A_list, b_list)
 
-        # --- Constant alpha=0.2 ---
-        bm, n = run_lsa_batched(A_list, b_list, traj, 0.2, K, burn_in)
-        tb, Sh = compute_covariance(bm, n)
-        results['alpha_0.2']['l2'].append(l2_error(tb, theta_star))
-        results['alpha_0.2']['width'].append(ci_width(Sh, K, n))
-        results['alpha_0.2']['cov'].append(coverage(theta_star, tb, Sh, K, n))
+    traj_rng = np.random.default_rng(prob_rng.integers(0, 2**31))
+    trajs = simulate_chains_batch(P, pi, T, n_traj, traj_rng)
 
-        # --- Constant alpha=0.02 ---
-        bm, n = run_lsa_batched(A_list, b_list, traj, 0.02, K, burn_in)
-        tb, Sh = compute_covariance(bm, n)
-        results['alpha_0.02']['l2'].append(l2_error(tb, theta_star))
-        results['alpha_0.02']['width'].append(ci_width(Sh, K, n))
-        results['alpha_0.02']['cov'].append(coverage(theta_star, tb, Sh, K, n))
+    evals = np.linalg.eigvals(A_bar)
+    max_re = float(np.max(np.real(evals)))
+    theta_norm = float(np.linalg.norm(theta_star))
 
-        # --- RR (0.2 + 0.02) ---
-        tt, St, lo, hi, se, n = run_rr_extrapolation(
-            A_list, b_list, traj, [0.2, 0.02], K, burn_in)
-        results['RR']['l2'].append(l2_error(tt, theta_star))
-        results['RR']['width'].append(2 * 1.96 * se)
-        results['RR']['cov'].append(float(lo <= theta_star[0] <= hi))
+    results = {}
 
-        # --- Diminishing 0.2/sqrt(k) ---
-        bm, n_eff = run_lsa_diminishing(A_list, b_list, traj, 0.2, 0.5, K)
-        tb, Sh = compute_covariance(bm, n_eff)
-        results['dim_0.2']['l2'].append(l2_error(tb, theta_star))
-        results['dim_0.2']['width'].append(ci_width(Sh, K, n_eff))
-        results['dim_0.2']['cov'].append(coverage(theta_star, tb, Sh, K, n_eff))
+    # Constant alpha=0.2
+    bm, n = run_lsa_batched_vec(A_arr, b_arr, trajs, 0.2, K, burn_in)
+    l2, w, c = compute_metrics_vec(bm, n, theta_star)
+    results['alpha_0.2'] = {'l2': float(np.nanmean(l2)), 'width': float(np.nanmean(w)),
+                            'cov': float(np.nanmean(c))}
 
-        # --- Diminishing 0.02/sqrt(k) ---
-        bm, n_eff = run_lsa_diminishing(A_list, b_list, traj, 0.02, 0.5, K)
-        tb, Sh = compute_covariance(bm, n_eff)
-        results['dim_0.02']['l2'].append(l2_error(tb, theta_star))
-        results['dim_0.02']['width'].append(ci_width(Sh, K, n_eff))
-        results['dim_0.02']['cov'].append(coverage(theta_star, tb, Sh, K, n_eff))
+    # Constant alpha=0.02
+    bm, n = run_lsa_batched_vec(A_arr, b_arr, trajs, 0.02, K, burn_in)
+    l2, w, c = compute_metrics_vec(bm, n, theta_star)
+    results['alpha_0.02'] = {'l2': float(np.nanmean(l2)), 'width': float(np.nanmean(w)),
+                             'cov': float(np.nanmean(c))}
 
-    # Average over trajectories for this problem
-    summary = {}
-    for m in methods:
-        summary[m] = {
-            'l2': np.mean(results[m]['l2']),
-            'width': np.mean(results[m]['width']),
-            'cov': np.mean(results[m]['cov']),
-        }
-    return summary
+    # RR (0.2 + 0.02)
+    l2, w, c = run_rr_vec(A_arr, b_arr, trajs, [0.2, 0.02], K, burn_in,
+                           theta_star=theta_star)
+    results['RR'] = {'l2': float(np.nanmean(l2)), 'width': float(np.nanmean(w)),
+                     'cov': float(np.nanmean(c))}
+
+    # Diminishing 0.2/sqrt(k)
+    bm, n_eff = run_lsa_diminishing_vec(A_arr, b_arr, trajs, 0.2, 0.5, K)
+    l2, w, c = compute_metrics_vec(bm, n_eff, theta_star)
+    results['dim_0.2'] = {'l2': float(np.nanmean(l2)), 'width': float(np.nanmean(w)),
+                          'cov': float(np.nanmean(c))}
+
+    # Diminishing 0.02/sqrt(k)
+    bm, n_eff = run_lsa_diminishing_vec(A_arr, b_arr, trajs, 0.02, 0.5, K)
+    l2, w, c = compute_metrics_vec(bm, n_eff, theta_star)
+    results['dim_0.02'] = {'l2': float(np.nanmean(l2)), 'width': float(np.nanmean(w)),
+                           'cov': float(np.nanmean(c))}
+
+    return prob_idx, results, theta_norm, max_re
 
 
-def main(n_problems=100, n_traj=100, T=100_000):
+def main(n_problems=100, n_traj=100, T=100_000, n_workers=None):
+    logger, log_path = setup_logger("table1")
+
     n_states = 10
     d = 5
-    K = int(T ** 0.3)  # ~16
+    K = int(T ** 0.3)
     burn_in = min(1000, T // 10)
 
-    print(f"[Config] n_problems={n_problems}, n_traj={n_traj}, T={T:,}, "
-          f"n_states={n_states}, d={d}, K={K}, burn_in={burn_in}")
+    if n_workers is None:
+        n_workers = min(mp.cpu_count(), n_problems)
+
+    logger.info(f"[Config] n_problems={n_problems}, n_traj={n_traj}, T={T:,}, "
+                f"n_states={n_states}, d={d}, K={K}, burn_in={burn_in}")
+    logger.info(f"[Config] n_workers={n_workers}, log_file={log_path}")
 
     master_rng = np.random.default_rng(42)
+    seeds = [int(master_rng.integers(0, 2**31)) for _ in range(n_problems)]
 
     methods = ['alpha_0.2', 'alpha_0.02', 'RR', 'dim_0.2', 'dim_0.02']
     method_labels = {
@@ -98,80 +107,72 @@ def main(n_problems=100, n_traj=100, T=100_000):
     }
     all_results = {m: {'l2': [], 'width': [], 'cov': []} for m in methods}
 
-    t_start_all = time.time()
+    task_args = [
+        (i, seeds[i], n_traj, T, K, burn_in, n_states, d)
+        for i in range(n_problems)
+    ]
 
-    for prob_idx in range(n_problems):
-        t_prob_start = time.time()
-        prob_seed = master_rng.integers(0, 2**31)
-        prob_rng = np.random.default_rng(prob_seed)
+    t_start = time.time()
+    completed = 0
 
-        P, pi = generate_transition_matrix(n_states, prob_rng)
-        A_list, A_bar = generate_A(n_states, d, pi, prob_rng)
-        b_list = generate_b(n_states, d, prob_rng)
-        theta_star = compute_theta_star(A_list, b_list, pi)
+    with mp.Pool(n_workers) as pool:
+        for prob_idx, results, theta_norm, max_re in pool.imap_unordered(
+                _solve_one_problem, task_args):
+            completed += 1
+            t_elapsed = time.time() - t_start
+            t_per = t_elapsed / completed
+            t_remaining = t_per * (n_problems - completed)
 
-        evals = np.linalg.eigvals(A_bar)
-        max_real = np.max(np.real(evals))
-        print(f"\n[Problem {prob_idx+1}/{n_problems}] seed={prob_seed}, "
-              f"||θ*||={np.linalg.norm(theta_star):.4f}, "
-              f"max_re(λ(Ā))={max_real:.4f}")
-
-        traj_rng = np.random.default_rng(prob_rng.integers(0, 2**31))
-        summary = run_single_problem(A_list, b_list, P, pi, theta_star,
-                                     T, K, n_traj, burn_in, traj_rng, prob_idx + 1)
-
-        for m in methods:
-            all_results[m]['l2'].append(summary[m]['l2'])
-            all_results[m]['width'].append(summary[m]['width'])
-            all_results[m]['cov'].append(summary[m]['cov'])
-
-        t_prob = time.time() - t_prob_start
-        t_elapsed = time.time() - t_start_all
-        t_per_prob = t_elapsed / (prob_idx + 1)
-        t_remaining = t_per_prob * (n_problems - prob_idx - 1)
-
-        print(f"  Results: "
-              f"RR cov={summary['RR']['cov']*100:.0f}%, "
-              f"α=0.02 cov={summary['alpha_0.02']['cov']*100:.0f}%, "
-              f"α=0.2 cov={summary['alpha_0.2']['cov']*100:.0f}%, "
-              f"dim0.2 cov={summary['dim_0.2']['cov']*100:.0f}%, "
-              f"dim0.02 cov={summary['dim_0.02']['cov']*100:.0f}%")
-        print(f"  L2 (×1e-3): "
-              f"RR={summary['RR']['l2']*1e3:.2f}, "
-              f"α=0.02={summary['alpha_0.02']['l2']*1e3:.2f}, "
-              f"α=0.2={summary['alpha_0.2']['l2']*1e3:.2f}")
-        print(f"  Time: {t_prob:.1f}s this problem | "
-              f"{t_elapsed:.0f}s elapsed | "
-              f"~{t_remaining:.0f}s remaining ({t_remaining/60:.1f}min)")
-
-        # Print running medians every 10 problems
-        if (prob_idx + 1) % 10 == 0:
-            n_done = prob_idx + 1
-            print(f"\n  --- Running medians after {n_done} problems ---")
             for m in methods:
-                med_cov = np.median(all_results[m]['cov'][:n_done]) * 100
-                med_l2 = np.median(all_results[m]['l2'][:n_done]) * 1e3
-                print(f"    {method_labels[m]:<20}: cov={med_cov:.1f}%, L2={med_l2:.2f}×1e-3")
+                all_results[m]['l2'].append(results[m]['l2'])
+                all_results[m]['width'].append(results[m]['width'])
+                all_results[m]['cov'].append(results[m]['cov'])
 
-    # Report percentiles
-    t_total = time.time() - t_start_all
+            logger.info(
+                f"[Problem {completed}/{n_problems}] "
+                f"||θ*||={theta_norm:.4f}, max_re(λ)={max_re:.4f} | "
+                f"RR cov={results['RR']['cov']*100:.0f}%, "
+                f"α0.02={results['alpha_0.02']['cov']*100:.0f}%, "
+                f"α0.2={results['alpha_0.2']['cov']*100:.0f}% | "
+                f"{t_elapsed:.0f}s elapsed, ~{t_remaining:.0f}s left"
+            )
+            logger.debug(
+                f"  L2(×1e-3): RR={results['RR']['l2']*1e3:.2f}, "
+                f"α0.02={results['alpha_0.02']['l2']*1e3:.2f}, "
+                f"α0.2={results['alpha_0.2']['l2']*1e3:.2f}, "
+                f"dim0.2={results['dim_0.2']['l2']*1e3:.2f}, "
+                f"dim0.02={results['dim_0.02']['l2']*1e3:.2f}"
+            )
+
+            if completed % 10 == 0:
+                logger.info(f"  --- Running medians after {completed} problems ---")
+                for m in methods:
+                    med_cov = np.median(all_results[m]['cov']) * 100
+                    med_l2 = np.median(all_results[m]['l2']) * 1e3
+                    logger.info(f"    {method_labels[m]:<20}: "
+                                f"cov={med_cov:.1f}%, L2={med_l2:.2f}×1e-3")
+
+    t_total = time.time() - t_start
+
+    # Final report
     percentiles = [10, 25, 50, 75, 90]
-    print("\n" + "=" * 80)
-    print(f"Table 1: Main Comparison ({n_problems} problems, T={T})")
-    print(f"Total time: {t_total:.0f}s ({t_total/60:.1f}min)")
-    print("=" * 80)
+    logger.info("")
+    logger.info("=" * 80)
+    logger.info(f"Table 1: Main Comparison ({n_problems} problems, T={T:,})")
+    logger.info(f"Total time: {t_total:.0f}s ({t_total/60:.1f}min)")
+    logger.info("=" * 80)
 
     for metric_name, scale, unit in [('l2', 1e3, '×1e-3'), ('width', 1e3, '×1e-3'), ('cov', 100, '%')]:
-        print(f"\n--- {metric_name} ({unit}) ---")
+        logger.info(f"\n--- {metric_name} ({unit}) ---")
         header = f"{'Method':<20}" + "".join(f"{'p'+str(p):>10}" for p in percentiles)
-        print(header)
+        logger.info(header)
         for m in methods:
             vals = np.array(all_results[m][metric_name]) * scale
             pcts = np.percentile(vals, percentiles)
             row = f"{method_labels[m]:<20}" + "".join(f"{v:>10.2f}" for v in pcts)
-            print(row)
+            logger.info(row)
 
-    # Save results
+    # Save CSV
     rows = []
     for m in methods:
         for metric in ['l2', 'width', 'cov']:
@@ -188,7 +189,8 @@ def main(n_problems=100, n_traj=100, T=100_000):
             })
     df = pd.DataFrame(rows)
     df.to_csv('results_table1.csv', index=False)
-    print("\nResults saved to results_table1.csv")
+    logger.info(f"\nResults saved to results_table1.csv")
+    logger.info(f"Full log saved to {log_path}")
 
 
 if __name__ == '__main__':
