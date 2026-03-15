@@ -80,8 +80,12 @@ def run_lsa_batched_vec(A_arr, b_arr, trajs, alpha, K, burn_in=100, n0=0):
     else:
         batch_means = batch_sums
 
-    # Replace any overflow (inf/nan) with nan so metrics use nanmean
-    batch_means = np.where(np.isfinite(batch_means), batch_means, np.nan)
+    # Mark diverged trajectories: replace inf/nan and very large values with
+    # nan so downstream metrics (squaring, norms) don't overflow float64.
+    batch_means = np.where(
+        np.isfinite(batch_means) & (np.abs(batch_means) < 1e150),
+        batch_means, np.nan
+    )
 
     return batch_means, n
 
@@ -142,6 +146,11 @@ def run_lsa_diminishing_vec(A_arr, b_arr, trajs, alpha0, alpha_exp=0.5,
         if batch_counts[k] > 0:
             batch_means[:, k, :] = batch_sums[:, k, :] / batch_counts[k]
             total_used += batch_counts[k]
+
+    batch_means = np.where(
+        np.isfinite(batch_means) & (np.abs(batch_means) < 1e150),
+        batch_means, np.nan
+    )
 
     n_eff = total_used // K if K > 0 else T
     return batch_means, n_eff
