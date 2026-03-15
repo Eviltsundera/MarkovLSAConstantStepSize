@@ -42,6 +42,15 @@ def _solve_one_problem(args):
 
     evals = np.linalg.eigvals(A_bar)
     max_re = float(np.max(np.real(evals)))
+    # Verify stability: |1 + alpha * lambda| < 1 for all eigenvalues
+    alpha_max = 0.2
+    spectral_radius = np.max(np.abs(1 + alpha_max * evals))
+    if spectral_radius >= 1.0:
+        import warnings
+        warnings.warn(
+            f"Problem {prob_idx}: rho(I + {alpha_max}*A_bar) = {spectral_radius:.4f} >= 1, "
+            f"expect divergence for alpha={alpha_max}"
+        )
     theta_norm = float(np.linalg.norm(theta_star))
 
     results = {}
