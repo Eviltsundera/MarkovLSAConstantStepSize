@@ -26,26 +26,6 @@ def generate_transition_matrix(n_states, rng):
             return P, pi
 
 
-def simulate_chain(P, pi, T, rng):
-    """Simulate a Markov chain trajectory of length T.
-
-    Args:
-        P: (n_states, n_states) transition matrix.
-        pi: (n_states,) stationary distribution (used for initialization).
-        T: Trajectory length.
-        rng: numpy random Generator.
-
-    Returns:
-        trajectory: list of length T with state indices.
-    """
-    n_states = len(pi)
-    x = rng.choice(n_states, p=pi)
-    trajectory = [x]
-    for _ in range(T - 1):
-        x = rng.choice(n_states, p=P[x])
-        trajectory.append(x)
-    return trajectory
-
 
 def simulate_chains_batch(P, pi, T, n_traj, rng):
     """Simulate n_traj independent Markov chain trajectories simultaneously.

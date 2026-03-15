@@ -47,7 +47,6 @@ def run_lsa_batched_vec(A_arr, b_arr, trajs, alpha, K, burn_in=100, n0=0):
     # Accumulate batch sums on the fly: (n_traj, K, d)
     batch_sums = np.zeros((n_traj, K, d))
 
-    post_t = 0       # counter in post-burn-in region
     current_batch = 0
     batch_count = 0
 
@@ -71,8 +70,6 @@ def run_lsa_batched_vec(A_arr, b_arr, trajs, alpha, K, burn_in=100, n0=0):
         if batch_count == n:
             current_batch += 1
             batch_count = 0
-
-        post_t += 1
 
     effective = n - n0
     if effective > 0:
