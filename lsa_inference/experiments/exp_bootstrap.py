@@ -12,18 +12,18 @@ import multiprocessing as mp
 import numpy as np
 import pandas as pd
 
-from lsa_inference.markov_chain import generate_transition_matrix, simulate_chains_batch
-from lsa_inference.lsa_problem import generate_A, generate_b, compute_theta_star
-from lsa_inference.vectorized import _prepare_arrays, run_rr_vec
+from lsa_inference.markov_chain import simulate_chains_batch
 from lsa_inference.logging_utils import setup_logger
+from lsa_inference.experiments.common import generate_problem, run_methods
 
 
 def _bootstrap_one(args):
-    """Worker: run bootstrap for a single trajectory."""
+    """Worker: run LSA + block bootstrap for a single trajectory."""
     traj, A_arr, b_arr, theta_star, alpha, burn_in, n_bootstrap, coord = args
     T = len(traj)
     d = b_arr.shape[1]
 
+    # Run LSA iteration and store all iterates
     theta = np.zeros(d)
     iterates = np.zeros((T, d))
     for t in range(T):
@@ -33,6 +33,7 @@ def _bootstrap_one(args):
 
     theta_bar = np.mean(iterates[burn_in:], axis=0)
 
+    # Block bootstrap
     block_size = max(int(np.log(T) / alpha), 100)
     n_blocks = (T - burn_in) // block_size
     post_iterates = iterates[burn_in:]
@@ -40,27 +41,26 @@ def _bootstrap_one(args):
     bootstrap_means = np.zeros((n_bootstrap, d))
     rng = np.random.default_rng(999)
     for b in range(n_bootstrap):
-        block_indices = rng.choice(n_blocks, size=n_blocks, replace=True)
-        resampled = np.concatenate([
-            post_iterates[i * block_size:(i + 1) * block_size]
-            for i in block_indices
-        ], axis=0)
+        idx = rng.choice(n_blocks, size=n_blocks, replace=True)
+        resampled = np.concatenate(
+            [post_iterates[i * block_size:(i + 1) * block_size] for i in idx],
+            axis=0,
+        )
         bootstrap_means[b] = np.mean(resampled, axis=0)
 
     lo = np.percentile(bootstrap_means[:, coord], 2.5)
     hi = np.percentile(bootstrap_means[:, coord], 97.5)
-    width = hi - lo
-    l2 = float(np.linalg.norm(theta_bar - theta_star))
-    cov = float(lo <= theta_star[coord] <= hi)
-
-    return l2, width, cov
+    return (
+        float(np.linalg.norm(theta_bar - theta_star)),  # l2
+        float(hi - lo),                                  # width
+        float(lo <= theta_star[coord] <= hi),             # cov
+    )
 
 
 def main(T=1_000_000, n_traj=500, n_workers=None):
     logger, log_path = setup_logger("bootstrap")
 
-    n_states = 10
-    d = 5
+    n_states, d = 10, 5
     burn_in = 1000
     K = int(T ** 0.3)
     if n_workers is None:
@@ -72,11 +72,7 @@ def main(T=1_000_000, n_traj=500, n_workers=None):
     logger.info(f"[Config] log_file={log_path}")
 
     rng = np.random.default_rng(789)
-    P, pi = generate_transition_matrix(n_states, rng)
-    A_list, A_bar = generate_A(n_states, d, pi, rng)
-    b_list = generate_b(n_states, d, rng)
-    theta_star = compute_theta_star(A_list, b_list, pi)
-    A_arr, b_arr = _prepare_arrays(A_list, b_list)
+    P, pi, A_bar, theta_star, A_arr, b_arr = generate_problem(n_states, d, rng)
 
     evals = np.linalg.eigvals(A_bar)
     logger.info(f"[Problem] ||θ*||={np.linalg.norm(theta_star):.4f}, "
@@ -93,8 +89,8 @@ def main(T=1_000_000, n_traj=500, n_workers=None):
     # RR — vectorized
     logger.info("\nRunning RR (vectorized)...")
     t0 = time.time()
-    rr_l2, rr_w, rr_c = run_rr_vec(A_arr, b_arr, trajs, [0.2, 0.02], K,
-                                     burn_in, theta_star=theta_star)
+    raw = run_methods(A_arr, b_arr, trajs, K, burn_in, theta_star, ['RR'])
+    rr_l2, rr_w, rr_c = raw['RR']['l2'], raw['RR']['width'], raw['RR']['cov']
     logger.info(f"RR done in {time.time()-t0:.1f}s: "
                 f"cov={np.nanmean(rr_c)*100:.1f}%, L2={np.nanmean(rr_l2):.2e}")
 
@@ -153,20 +149,15 @@ def main(T=1_000_000, n_traj=500, n_workers=None):
             'l2_error': float(np.mean(l2_arr)),
             'ci_width': float(np.mean(w_arr)),
         })
-    df = pd.DataFrame(rows)
-    df.to_csv('results_bootstrap.csv', index=False)
+    pd.DataFrame(rows).to_csv('results_bootstrap.csv', index=False)
     logger.info(f"\nResults saved to results_bootstrap.csv")
     logger.info(f"Full log saved to {log_path}")
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Table 4: RR vs Bootstrap comparison")
-    parser.add_argument("-T", type=int, default=1_000_000, help="Trajectory length (default: 1000000)")
-    parser.add_argument("--n-traj", type=int, default=500, help="Number of trajectories (default: 500)")
-    parser.add_argument("--n-workers", type=int, default=None, help="Multiprocessing workers (default: cpu_count)")
-    return parser.parse_args()
-
-
 if __name__ == '__main__':
-    args = parse_args()
+    parser = argparse.ArgumentParser(description="Table 4: RR vs Bootstrap comparison")
+    parser.add_argument("-T", type=int, default=1_000_000)
+    parser.add_argument("--n-traj", type=int, default=500)
+    parser.add_argument("--n-workers", type=int, default=None)
+    args = parser.parse_args()
     main(T=args.T, n_traj=args.n_traj, n_workers=args.n_workers)

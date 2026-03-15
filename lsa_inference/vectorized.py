@@ -204,6 +204,22 @@ def compute_metrics_vec(batch_means, n, theta_star, n0=0, q=0.05, coord=0):
     return l2_errors, ci_widths, coverages
 
 
+def rr_coefficients(alphas):
+    """Compute RR extrapolation weights via Lagrange interpolation.
+
+    Returns h such that sum(h) = 1 and sum(h_m * alpha_m^l) = 0
+    for l = 1, ..., M-1.
+    """
+    alphas = np.asarray(alphas, dtype=float)
+    M = len(alphas)
+    h = np.ones(M)
+    for m in range(M):
+        for l in range(M):
+            if l != m:
+                h[m] *= alphas[l] / (alphas[l] - alphas[m])
+    return h
+
+
 def run_rr_vec(A_arr, b_arr, trajs, alphas, K, burn_in=100, n0=0,
                q=0.05, coord=0, theta_star=None):
     """Run RR extrapolation for all trajectories simultaneously.
@@ -225,13 +241,8 @@ def run_rr_vec(A_arr, b_arr, trajs, alphas, K, burn_in=100, n0=0,
         ci_widths: (n_traj,) CI widths.
         coverages: (n_traj,) coverage indicators.
     """
+    h = rr_coefficients(alphas)
     M = len(alphas)
-    # RR coefficients
-    h = np.ones(M)
-    for m in range(M):
-        for l in range(M):
-            if l != m:
-                h[m] *= alphas[l] / (alphas[l] - alphas[m])
 
     # Run LSA for each stepsize
     all_batch_means = []
