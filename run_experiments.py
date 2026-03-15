@@ -15,11 +15,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run reproduction experiments for Markovian LSA paper"
     )
+    valid = ["table1", "table2", "table3", "bootstrap"]
     parser.add_argument(
-        "experiments", nargs="*",
-        default=["table1", "table2", "table3", "bootstrap"],
-        choices=["table1", "table2", "table3", "bootstrap"],
-        help="Experiments to run (default: all)"
+        "experiments", nargs="*", default=valid,
+        help="Experiments to run (default: all). Choices: " + ", ".join(valid)
     )
     parser.add_argument("--n-workers", type=int, default=None,
                         help="Multiprocessing workers (for table1, bootstrap)")
@@ -30,6 +29,10 @@ def main():
     parser.add_argument("-T", type=int, default=None,
                         help="Override trajectory length")
     args = parser.parse_args()
+
+    for exp in args.experiments:
+        if exp not in valid:
+            parser.error(f"Unknown experiment: {exp}. Choose from: {', '.join(valid)}")
 
     for exp in args.experiments:
         if exp == "table1":
