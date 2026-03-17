@@ -9,19 +9,16 @@ lsa_inference/
 ├── markov_chain.py      # Transition matrix generation, chain simulation
 ├── lsa_problem.py       # A(x), b(x) generation with Hurwitz mean, θ* computation
 ├── vectorized.py        # Core vectorized LSA engine (all trajectories at once)
-├── lsa_runner.py        # Single-trajectory LSA runner (reference implementation)
-├── batch_inference.py   # Single-trajectory covariance estimation and CIs
-├── rr_extrapolation.py  # Single-trajectory RR extrapolation
-├── utils.py             # Scalar metric helpers (L2, CI width, coverage)
 ├── logging_utils.py     # Dual console+file logger setup
 └── experiments/
+    ├── common.py        # Shared utilities: problem generation, method dispatch
     ├── exp_main.py      # Table 1: 100 problems comparison (multiprocessing)
     ├── exp_batch_k.py   # Table 2: Effect of batch number K
     ├── exp_traj_len.py  # Table 3: Effect of trajectory length T
     └── exp_bootstrap.py # Table 4: RR vs bootstrap (multiprocessing)
 ```
 
-## Vectorized vs Reference Implementation
+## Vectorized Engine
 
 The `vectorized.py` module is the primary compute engine. It processes all `n_traj`
 trajectories simultaneously using numpy broadcasting:
@@ -31,9 +28,8 @@ theta update: thetas += alpha * (einsum('nij,nj->ni', A_t, thetas) + b_t)
 shapes:       (n_traj, d)  += alpha * ((n_traj, d, d) @ (n_traj, d) + (n_traj, d))
 ```
 
-The single-trajectory modules (`lsa_runner.py`, `batch_inference.py`,
-`rr_extrapolation.py`, `utils.py`) serve as reference implementations matching
-the paper's pseudocode. They are not used by the experiment scripts.
+It contains constant-stepsize LSA, diminishing-stepsize LSA, RR extrapolation,
+and metric computation (L2 error, CI width, coverage) — all vectorized across trajectories.
 
 ## Parallelization Strategy
 

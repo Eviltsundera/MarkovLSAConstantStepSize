@@ -72,11 +72,10 @@ uv run python run_experiments.py bootstrap   # Bootstrap comparison (T=10^6)
 lsa_inference/
 ├── markov_chain.py       # Transition matrix generation, chain simulation
 ├── lsa_problem.py        # A(x), b(x) generation with Hurwitz mean, θ* computation
-├── lsa_runner.py         # Constant & diminishing stepsize LSA with batch-mean collection
-├── batch_inference.py    # Covariance estimation and confidence intervals
-├── rr_extrapolation.py   # Richardson-Romberg bias correction (Algorithm 2)
-├── utils.py              # Metrics: L2 error, CI width, coverage
+├── vectorized.py         # Core vectorized LSA engine (all trajectories at once)
+├── logging_utils.py      # Dual console+file logger setup
 └── experiments/
+    ├── common.py         # Shared utilities: problem generation, method dispatch
     ├── exp_main.py       # Table 1
     ├── exp_batch_k.py    # Table 2
     ├── exp_traj_len.py   # Table 3
@@ -84,7 +83,9 @@ lsa_inference/
 
 run_quick.py              # Quick validation (~30 min)
 run_experiments.py        # Full-scale reproduction
-LSA_Inference_Summary.md  # Detailed paper summary & algorithm specs
+docs/
+├── LSA_Inference_Summary.md  # Detailed paper summary & algorithm specs
+└── architecture.md           # Module layout & parallelization strategy
 ```
 
 ## Expected Results (Paper Reference)
