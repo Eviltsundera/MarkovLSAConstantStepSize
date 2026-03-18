@@ -102,8 +102,8 @@ def main(n_problems=100, n_traj=100, T=100_000, n_workers=None):
             vals = np.array(all_results[m][metric])
             rows.append({
                 'method': METHOD_LABELS[m], 'metric': metric,
-                **{f'p{p}': np.percentile(vals, p) for p in [10, 25, 50, 75, 90]},
-                'mean': np.mean(vals),
+                **{f'p{p}': np.nanpercentile(vals, p) for p in [10, 25, 50, 75, 90]},
+                'mean': np.nanmean(vals),
             })
     pd.DataFrame(rows).to_csv('results_table1.csv', index=False)
     logger.info(f"\nResults saved to results_table1.csv")

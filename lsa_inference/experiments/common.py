@@ -131,5 +131,5 @@ def print_percentile_table(logger, all_results, methods,
         logger.info(header)
         for m in methods:
             vals = np.array(all_results[m][metric]) * scale
-            pcts = np.percentile(vals, percentiles)
+            pcts = np.nanpercentile(vals, percentiles)
             logger.info(f"{METHOD_LABELS[m]:<20}" + "".join(f"{v:>10.2f}" for v in pcts))
